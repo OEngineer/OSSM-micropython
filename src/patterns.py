@@ -7,9 +7,9 @@ class PatternInput:
     """Live-updateable motion parameters, shared between engine and pattern tasks."""
 
     def __init__(self):
-        self.depth = 0.5      # 0.0–1.0: how deep (fraction of machine range)
-        self.stroke = 0.5     # 0.0–1.0: stroke length as fraction of depth
-        self.velocity = 0.5   # 0.0–1.0: fraction of max speed
+        self.depth = 0.0      # 0.0–1.0: how deep (fraction of machine range)
+        self.stroke = 0.0     # 0.0–1.0: stroke length as fraction of depth
+        self.velocity = 0.0   # 0.0–1.0: fraction of max speed
         self.sensation = 0.0  # -1.0 to 1.0: pattern-specific modifier
 
 
@@ -79,7 +79,7 @@ async def simple_stroke(ctrl, inp):
 
 
 async def deeper(ctrl, inp):
-    """Progressively deeper strokes. Sensation controls step count (2–22)."""
+    """Progressively deeper strokes. Sensation controls step count (2-22)."""
     MIN_STEPS = 2
     MAX_STEPS = 22
     while True:
@@ -110,7 +110,7 @@ async def half_n_half(ctrl, inp):
 
 
 async def stop_n_go(ctrl, inp):
-    """Stroke N times then pause. Sensation controls pause duration (100ms–10s)."""
+    """Stroke N times then pause. Sensation controls pause duration (100ms-10s)."""
     MAX_STROKES = 5
     MIN_DELAY_MS = 100
     MAX_DELAY_MS = 10_000
