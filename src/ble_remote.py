@@ -189,5 +189,6 @@ class BleRemote:
                 except asyncio.CancelledError:
                     pass
 
+            await self._engine.stop()
             self._connection = None
             print("BLE disconnected")
