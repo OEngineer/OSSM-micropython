@@ -27,13 +27,14 @@ from .patterns import PATTERNS, PATTERN_FUNCS
 _service = None
 _primary_char = None
 _speed_char = None
+_latency_char = None
 _state_char = None
 _pattern_list_char = None
 _pattern_desc_char = None
 
 
 def _register_services():
-    global _service, _primary_char, _speed_char, _state_char
+    global _service, _primary_char, _speed_char, _latency_char, _state_char
     global _pattern_list_char, _pattern_desc_char
 
     _service = aioble.Service(bluetooth.UUID(config.SERVICE_UUID))
@@ -44,6 +45,10 @@ def _register_services():
     )
     _speed_char = aioble.Characteristic(
         _service, bluetooth.UUID(config.SPEED_KNOB_UUID),
+        read=True, write=True,
+    )
+    _latency_char = aioble.Characteristic(
+        _service, bluetooth.UUID(config.LATENCY_COMP_UUID),
         read=True, write=True,
     )
     _state_char = aioble.Characteristic(
@@ -63,6 +68,7 @@ def _register_services():
 
     _pattern_list_char.write(json.dumps([p[0] for p in PATTERNS]).encode())
     _pattern_desc_char.write(PATTERNS[0][1].encode())
+    _latency_char.write(b"false")
 
 
 class BleRemote:
@@ -178,6 +184,20 @@ class BleRemote:
             except Exception as e:
                 print(f"BLE heartbeat notify error: {e}")
 
+    async def _watch_latency(self, connection):
+        """Task: relay writes on LATENCY_COMP to the engine flag."""
+        while True:
+            try:
+                await _latency_char.written(timeout_ms=200)
+                raw = _latency_char.read().decode().strip().lower()
+                enabled = raw in ("true", "1", "t")
+                self._engine.latency_comp = enabled
+                _latency_char.write(b"true" if enabled else b"false")
+            except asyncio.TimeoutError:
+                pass
+            except Exception as e:
+                print(f"_watch_latency error: {e}")
+
     async def _watch_speed(self, connection):
         """Task: relay writes on SPEED_KNOB to velocity updates."""
         while True:
@@ -213,20 +233,22 @@ class BleRemote:
             except Exception as e:
                 print(f"BLE initial notify error: {e}")
 
-            # Watch both writeable characteristics and send periodic heartbeat
+            # Watch all writeable characteristics and send periodic heartbeat
             t_primary = asyncio.create_task(self._watch_primary(connection))
             t_speed = asyncio.create_task(self._watch_speed(connection))
+            t_latency = asyncio.create_task(self._watch_latency(connection))
             t_heartbeat = asyncio.create_task(self._heartbeat(connection))
 
             await connection.disconnected()
 
             t_primary.cancel()
             t_speed.cancel()
+            t_latency.cancel()
             t_heartbeat.cancel()
             if self._notify_task is not None:
                 self._notify_task.cancel()
                 self._notify_task = None
-            for t in (t_primary, t_speed, t_heartbeat):
+            for t in (t_primary, t_speed, t_latency, t_heartbeat):
                 try:
                     await t
                 except asyncio.CancelledError:

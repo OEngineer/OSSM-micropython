@@ -27,6 +27,7 @@ class PatternEngine:
         self._task = None
         self._state_cb = None  # called on state/inp changes (for BLE notify)
         self._stream_queue = Queue()
+        self.latency_comp = False
         self._session_id = f"{random.getrandbits(32):08x}"
 
     def set_state_callback(self, cb):
@@ -112,8 +113,16 @@ class PatternEngine:
             pass  # drop if queue full
 
     async def _streaming_pattern(self):
-        """Consume stream targets and execute them."""
+        """Consume stream targets and execute them.
+
+        When self.latency_comp is True, applies the upstream buffer-based
+        timing correction: adjusts each move duration to absorb jitter,
+        shortening by up to 1/4 or extending by up to buffer*2 ms.
+        """
         range_mm = config.MAX_MM - config.MIN_MM
+        # Latency compensation state
+        best_ms = time.ticks_ms()   # ideal-timeline clock
+        last_time_ms = 0            # nominal duration of the previous move
         try:
             while True:
                 try:
@@ -121,15 +130,19 @@ class PatternEngine:
                         self._stream_queue.get(), 5000
                     )
                 except asyncio.TimeoutError:
+                    # Long idle — reset the ideal timeline so stale lag
+                    # doesn't corrupt the next burst of moves.
+                    best_ms = time.ticks_ms()
+                    last_time_ms = 0
                     continue
                 # Apply depth/stroke windowing matching upstream streaming.cpp.
                 # BLE pos_frac: 0.0 = deep end (fully extended), 1.0 = shallow end.
                 # maxStroke = min(stroke, depth) caps stroke at depth.
                 # depth_offset positions the window within the full travel range.
                 inp = self.inp
-                # Gap A: apply sensation as acceleration limit (upstream streaming.cpp
-                # line 92: accelLimit = maxAccel * (settings.sensation / 100.0)).
-                # inp.sensation is [-1, 1]; map to [0, 1] matching upstream 0-100 range.
+                # Gap A (fixed): apply sensation as acceleration limit (upstream
+                # streaming.cpp line 92: accelLimit = maxAccel * sensation/100).
+                # inp.sensation is [-1, 1]; map to [0, 1] matching upstream 0-100.
                 sensation_frac = max(0.01, (inp.sensation + 1.0) / 2.0)
                 self._ctrl.update_accel(sensation_frac)
                 max_stroke = min(inp.stroke, inp.depth)
@@ -137,8 +150,30 @@ class PatternEngine:
                 target = (1.0 - pos_frac) * max_stroke + depth_offset
                 current = self._ctrl.position_frac
                 dist_mm = abs(target - current) * range_mm
-                if time_ms > 0 and dist_mm > 0:
-                    speed_frac = (dist_mm * 1000 / time_ms) / config.MAX_SPEED_MM_S
+
+                # Gap B: latency compensation (upstream streaming.cpp lines 67-85).
+                # Measures how far behind the ideal timeline we are and shortens or
+                # extends the move time to stay synchronised with the client clock.
+                # inp.buffer (0-1) maps to upstream settings.buffer (0-100) in ms.
+                adjusted_time_ms = time_ms
+                if self.latency_comp and last_time_ms > 0:
+                    now_ms = time.ticks_ms()
+                    current_buffer_ms = time.ticks_diff(now_ms, best_ms)
+                    buffer_ms = inp.buffer * 100.0
+                    mincomp = int(min(buffer_ms * 2, last_time_ms))
+                    offset = mincomp - current_buffer_ms
+                    if offset < 0:
+                        offset = max(-(time_ms // 4), offset)
+                    adjusted_time_ms = max(1, time_ms + offset)
+
+                # Advance ideal timeline by the nominal (unadjusted) duration.
+                best_ms = time.ticks_add(best_ms, time_ms)
+                last_time_ms = time_ms
+
+                if adjusted_time_ms > 0 and dist_mm > 0:
+                    speed_frac = (
+                        (dist_mm * 1000 / adjusted_time_ms) / config.MAX_SPEED_MM_S
+                    )
                 else:
                     speed_frac = 1.0
                 self._ctrl.move_to(target, max(0.01, min(1.0, speed_frac)))
