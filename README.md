@@ -38,8 +38,8 @@ main.py                   — asyncio entry point
 src/
   config.py               — all hardware and motion constants
   motion.py               — MotionController: state machine + stepper-lib wrapper
-  patterns.py             — PatternInput dataclass + 5 stroke patterns
-  pattern_engine.py       — PatternEngine: task lifecycle, live parameter updates
+  patterns.py             — PatternInput dataclass + 7 stroke patterns
+  pattern_engine.py       — PatternEngine: task lifecycle, live parameter updates, streaming
   ble_remote.py           — aioble BLE server, OSSM protocol
 ```
 
@@ -55,8 +55,7 @@ Install to `/lib/` on the device:
 |----------------|--------------------------------------------------------------------------------------|
 | `smartstepper` | `mpremote mip install github:bikeNomad/micropython-rp2-smartStepper`                 |
 | `aioble`       | `mpremote mip install aioble`                                                        |
-| `primitives`   | `mpremote mip install github:peterhinch/micropython-async/v3/primitives`            |
-| `threadsafe`   | `mpremote mip install github:peterhinch/micropython-async/v3/threadsafe`            |
+| `primitives`   | `mpremote mip install github:peterhinch/micropython-async/v3/primitives`             |
 
 
 ## Deploying
@@ -66,7 +65,6 @@ Install to `/lib/` on the device:
 mpremote mip install github:bikeNomad/micropython-rp2-smartStepper
 mpremote mip install aioble
 mpremote mip install github:peterhinch/micropython-async/v3/primitives
-mpremote mip install github:peterhinch/micropython-async/v3/threadsafe
 
 # Copy firmware
 mpremote cp -r src/ :/src/
@@ -82,12 +80,16 @@ Compatible with the https://github.com/KinkyMakers/OSSM-hardware.git `main` bran
 | Command | Effect |
 |---------|--------|
 | `go:strokeEngine` | Home motor, then start current pattern |
+| `go:simplePenetration` | Same as `go:strokeEngine` |
+| `go:streaming` | Home (if needed), then enter streaming mode |
 | `go:menu` | Stop |
 | `set:speed:<0–100>` | Set velocity (fraction of max) |
 | `set:depth:<0–100>` | Set depth (fraction of stroke range) |
 | `set:stroke:<0–100>` | Set stroke length (fraction of depth) |
 | `set:sensation:<0–100>` | Set pattern modifier (mapped to −1.0–1.0) |
-| `set:pattern:<0–4>` | Switch pattern by index |
+| `set:buffer:<0–100>` | Set streaming buffer parameter |
+| `set:pattern:<0–6>` | Switch pattern by index |
+| `stream:<pos>:<ms>` | Move to position `pos` (0–100) in `ms` milliseconds (streaming mode) |
 
 ### State notifications
 
@@ -95,15 +97,19 @@ JSON sent on CURRENT_STATE characteristic after every parameter change or state 
 
 ```json
 {
+  "timestamp": 12345,
   "state": "playing",
   "pattern": 0,
-  "patternName": "Simple Stroke",
   "speed": 50,
   "depth": 60,
   "stroke": 50,
-  "sensation": 50
+  "sensation": 50,
+  "position": 30,
+  "sessionId": "a1b2c3d4"
 }
 ```
+
+`state` is one of: `"idle"`, `"homing"`, `"ready"`, `"playing"`, `"streaming"`, `"paused"`.
 
 ### BLE UUIDs
 
@@ -120,24 +126,32 @@ Same as `ossm/` reference firmware:
 
 ## Patterns
 
+Matches upstream `StrokePatterns` enum order:
+
 | # | Name | Sensation |
 |---|------|-----------|
 | 0 | Simple Stroke | — |
-| 1 | Deeper | Controls step count (2–22 incremental strokes) |
-| 2 | Half'n'Half | Controls in/out speed ratio |
-| 3 | Stop'n'Go | Controls pause duration (100 ms – 10 s) |
-| 4 | Teasing Pounding | Controls in/out speed ratio |
+| 1 | Teasing Pounding | Controls in/out speed ratio |
+| 2 | Robo Stroke | Adjusts speed character |
+| 3 | Half'n'Half | Controls in/out speed ratio |
+| 4 | Deeper | Controls step count (2–32 incremental strokes) |
+| 5 | Stop'n'Go | Controls pause duration (100 ms – 10 s) |
+| 6 | Insist | Shifts position and stroke length |
 
 All patterns respond to live changes to depth, stroke, and velocity without stopping.
 
+## Streaming mode
+
+`go:streaming` homes the motor (if not already homed) and enters streaming mode. The engine then accepts `stream:<pos>:<ms>` commands, moving to each target position in the requested time. Position applies depth/stroke windowing matching the upstream `streaming.cpp` logic: `pos` 0 = deep end, 100 = shallow end.
+
 ## Homing
 
-On `go:strokeEngine`, the motor runs a three-phase homing sequence:
+On `go:strokeEngine` or `go:streaming`, the motor runs a three-phase homing sequence:
 1. **Backoff** (if sensor already triggered): jog away at slow speed
 2. **Fast approach**: jog toward sensor at 50 mm/s until limit switch triggers
 3. **Slow backoff**: jog away at 5 mm/s; stop immediately when switch releases
 
-Position is set to 0 at the switch release point, then the carriage moves to `MIN_MM` before patterns begin.
+Position is set to `HOME_SENSOR_MM` (default 0) at the switch release point, then the carriage moves to `MIN_MM` before patterns begin.
 
 ## Motion profile
 
