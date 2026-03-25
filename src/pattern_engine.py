@@ -114,29 +114,37 @@ class PatternEngine:
     async def _streaming_pattern(self):
         """Consume stream targets and execute them."""
         range_mm = config.MAX_MM - config.MIN_MM
-        while True:
-            try:
-                pos_frac, time_ms = await asyncio.wait_for_ms(
-                    self._stream_queue.get(), 5000
-                )
-            except asyncio.TimeoutError:
-                continue
-            # Apply depth/stroke windowing matching upstream streaming.cpp.
-            # BLE pos_frac: 0.0 = deep end (fully extended), 1.0 = shallow end.
-            # maxStroke = min(stroke, depth) caps stroke at depth.
-            # depth_offset positions the window within the full travel range.
-            inp = self.inp
-            max_stroke = min(inp.stroke, inp.depth)
-            depth_offset = (1.0 - max_stroke) * inp.depth
-            target = (1.0 - pos_frac) * max_stroke + depth_offset
-            current = self._ctrl.position_frac
-            dist_mm = abs(target - current) * range_mm
-            if time_ms > 0 and dist_mm > 0:
-                speed_frac = (dist_mm * 1000 / time_ms) / config.MAX_SPEED_MM_S
-            else:
-                speed_frac = 1.0
-            self._ctrl.move_to(target, max(0.01, min(1.0, speed_frac)))
-            await self._ctrl.wait_done()
+        try:
+            while True:
+                try:
+                    pos_frac, time_ms = await asyncio.wait_for_ms(
+                        self._stream_queue.get(), 5000
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                # Apply depth/stroke windowing matching upstream streaming.cpp.
+                # BLE pos_frac: 0.0 = deep end (fully extended), 1.0 = shallow end.
+                # maxStroke = min(stroke, depth) caps stroke at depth.
+                # depth_offset positions the window within the full travel range.
+                inp = self.inp
+                # Gap A: apply sensation as acceleration limit (upstream streaming.cpp
+                # line 92: accelLimit = maxAccel * (settings.sensation / 100.0)).
+                # inp.sensation is [-1, 1]; map to [0, 1] matching upstream 0-100 range.
+                sensation_frac = max(0.01, (inp.sensation + 1.0) / 2.0)
+                self._ctrl.update_accel(sensation_frac)
+                max_stroke = min(inp.stroke, inp.depth)
+                depth_offset = (1.0 - max_stroke) * inp.depth
+                target = (1.0 - pos_frac) * max_stroke + depth_offset
+                current = self._ctrl.position_frac
+                dist_mm = abs(target - current) * range_mm
+                if time_ms > 0 and dist_mm > 0:
+                    speed_frac = (dist_mm * 1000 / time_ms) / config.MAX_SPEED_MM_S
+                else:
+                    speed_frac = 1.0
+                self._ctrl.move_to(target, max(0.01, min(1.0, speed_frac)))
+                await self._ctrl.wait_done()
+        finally:
+            self._ctrl.update_accel(1.0)  # restore max accel on exit
 
     # ------------------------------------------------------------------ #
     # Internal                                                              #

@@ -92,6 +92,10 @@ class MotionController:
         """Update speed mid-move — stepper-lib replans automatically."""
         self._stepper.maxSpeed = self._frac_to_speed(speed_frac)
 
+    def update_accel(self, accel_frac):
+        """Set acceleration as a fraction of max — used by streaming for sensation."""
+        self._stepper.acceleration = max(1.0, accel_frac * config.MAX_ACCEL_MM_S2)
+
     async def wait_done(self):
         await self._axis.wait_done()
 
