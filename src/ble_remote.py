@@ -166,6 +166,18 @@ class BleRemote:
             except Exception as e:
                 print(f"_watch_primary error: {e}")
 
+    async def _heartbeat(self, connection):
+        """Task: send a state notification every second regardless of change."""
+        while True:
+            await asyncio.sleep_ms(1000)
+            if self._connection is None:
+                return
+            data = json.dumps(self._engine.state_dict()).encode()
+            try:
+                _state_char.notify(connection, data)
+            except Exception as e:
+                print(f"BLE heartbeat notify error: {e}")
+
     async def _watch_speed(self, connection):
         """Task: relay writes on SPEED_KNOB to velocity updates."""
         while True:
@@ -201,18 +213,20 @@ class BleRemote:
             except Exception as e:
                 print(f"BLE initial notify error: {e}")
 
-            # Watch both writeable characteristics concurrently
+            # Watch both writeable characteristics and send periodic heartbeat
             t_primary = asyncio.create_task(self._watch_primary(connection))
             t_speed = asyncio.create_task(self._watch_speed(connection))
+            t_heartbeat = asyncio.create_task(self._heartbeat(connection))
 
             await connection.disconnected()
 
             t_primary.cancel()
             t_speed.cancel()
+            t_heartbeat.cancel()
             if self._notify_task is not None:
                 self._notify_task.cancel()
                 self._notify_task = None
-            for t in (t_primary, t_speed):
+            for t in (t_primary, t_speed, t_heartbeat):
                 try:
                     await t
                 except asyncio.CancelledError:
