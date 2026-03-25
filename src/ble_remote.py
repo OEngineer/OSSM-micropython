@@ -144,6 +144,8 @@ class BleRemote:
                 self._handle_command(_primary_char.read())
             except asyncio.TimeoutError:
                 pass
+            except Exception as e:
+                print(f"_watch_primary error: {e}")
 
     async def _watch_speed(self, connection):
         """Task: relay writes on SPEED_KNOB to velocity updates."""
@@ -158,6 +160,8 @@ class BleRemote:
                     pass
             except asyncio.TimeoutError:
                 pass
+            except Exception as e:
+                print(f"_watch_speed error: {e}")
 
     async def run(self):
         """Advertise and dispatch commands indefinitely."""
@@ -173,7 +177,10 @@ class BleRemote:
 
             # Send current state immediately on connect
             data = json.dumps(self._engine.state_dict()).encode()
-            _state_char.notify(connection, data)
+            try:
+                _state_char.notify(connection, data)
+            except Exception as e:
+                print(f"BLE initial notify error: {e}")
 
             # Watch both writeable characteristics concurrently
             t_primary = asyncio.create_task(self._watch_primary(connection))
