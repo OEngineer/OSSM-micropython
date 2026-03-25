@@ -55,6 +55,9 @@ Install to `/lib/` on the device:
 |----------------|--------------------------------------------------------------------------------------|
 | `smartstepper` | `mpremote mip install github:bikeNomad/micropython-rp2-smartStepper`                 |
 | `aioble`       | `mpremote mip install aioble`                                                        |
+| `primitives`   | `mpremote mip install github:peterhinch/micropython-async/v3/primitives`            |
+| `threadsafe`   | `mpremote mip install github:peterhinch/micropython-async/v3/threadsafe`            |
+
 
 ## Deploying
 
@@ -62,6 +65,8 @@ Install to `/lib/` on the device:
 # Install dependencies
 mpremote mip install github:bikeNomad/micropython-rp2-smartStepper
 mpremote mip install aioble
+mpremote mip install github:peterhinch/micropython-async/v3/primitives
+mpremote mip install github:peterhinch/micropython-async/v3/threadsafe
 
 # Copy firmware
 mpremote cp -r src/ :/src/
