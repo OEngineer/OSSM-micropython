@@ -4,22 +4,35 @@ import asyncio
 
 
 class PatternInput:
-    """Live-updateable motion parameters, shared between engine and pattern tasks."""
+    """Live-updateable motion parameters, shared between engine and tasks."""
 
     def __init__(self):
         self.depth = 0.0      # 0.0–1.0: how deep (fraction of machine range)
         self.stroke = 0.0     # 0.0–1.0: stroke length as fraction of depth
         self.velocity = 0.0   # 0.0–1.0: fraction of max speed
         self.sensation = 0.0  # -1.0 to 1.0: pattern-specific modifier
+        self.buffer = 0.0     # 0.0–1.0: streaming buffer
 
 
 # Pattern metadata: (name, description)
+# Order matches upstream StrokePatterns enum:
+#   SimpleStroke=0, TeasingPounding=1, RoboStroke=2, HalfnHalf=3,
+#   Deeper=4, StopNGo=5, Insist=6
 PATTERNS = [
-    ("Simple Stroke", "Simple in and out. Sensation does nothing."),
-    ("Deeper", "Goes deeper with every stroke. Sensation controls the number of steps."),
-    ("Half'n'Half", "Alternate full and half strokes. Sensation controls speed ratio."),
-    ("Stop'n'Go", "Stops after a series of strokes. Sensation controls the delay."),
-    ("Teasing Pounding", "Alternating strokes. Sensation controls in/out speed ratio."),
+    ("Simple Stroke",
+     "Simple in and out. Sensation does nothing."),
+    ("Teasing Pounding",
+     "Alternating strokes. Sensation controls in/out speed ratio."),
+    ("Robo Stroke",
+     "Robotic strokes. Sensation adjusts speed character."),
+    ("Half'n'Half",
+     "Alternate full and half strokes. Sensation controls speed ratio."),
+    ("Deeper",
+     "Goes deeper with every stroke. Sensation controls step count."),
+    ("Stop'n'Go",
+     "Stops after a series of strokes. Sensation controls the delay."),
+    ("Insist",
+     "Short rapid strokes. Sensation shifts position and stroke length."),
 ]
 
 
@@ -46,7 +59,7 @@ def _pattern_pos(inp, frac):
 
 
 async def _move(ctrl, inp, position_frac, speed_factor=1.0):
-    """Move to position_frac within the stroke range and wait for completion.
+    """Move to position_frac within the stroke range and wait.
 
     Polls inp.velocity every 20 ms so speed changes take effect mid-move.
     Propagates CancelledError to support task cancellation.
@@ -78,15 +91,34 @@ async def simple_stroke(ctrl, inp):
         await _move(ctrl, inp, 0.0)
 
 
-async def deeper(ctrl, inp):
-    """Progressively deeper strokes. Sensation controls step count (2-22)."""
-    MIN_STEPS = 2
-    MAX_STEPS = 22
+async def teasing_pounding(ctrl, inp):
+    """Alternating strokes with asymmetric speed. Sensation controls ratio."""
+    MAX_SCALING = 5.0
+    BASE_SPEED = 1.0 / MAX_SCALING
     while True:
-        num_steps = max(1, round(_scale(inp.sensation, -1.0, 1.0, MIN_STEPS, MAX_STEPS)))
-        for step in range(1, num_steps + 1):
-            await _move(ctrl, inp, step / num_steps)
-            await _move(ctrl, inp, 0.0)
+        sensation = inp.sensation
+        factor = _scale(abs(sensation), 0.0, 1.0, 1.0, MAX_SCALING)
+        if sensation > 0.0:
+            out_speed, in_speed = BASE_SPEED, BASE_SPEED * factor
+        elif sensation < 0.0:
+            out_speed, in_speed = BASE_SPEED * factor, BASE_SPEED
+        else:
+            out_speed, in_speed = BASE_SPEED, BASE_SPEED
+        await _move(ctrl, inp, 1.0, out_speed)
+        await _move(ctrl, inp, 0.0, in_speed)
+
+
+async def robo_stroke(ctrl, inp):
+    """Robotic strokes. Sensation scales speed character.
+
+    Approximates the upstream RoboStroke trapezoid-profile variation:
+    higher sensation → higher speed → more constant-speed feel;
+    lower sensation → lower speed → more triangular feel.
+    """
+    while True:
+        factor = max(0.1, 1.0 + inp.sensation * 0.5)  # 0.5–1.5
+        await _move(ctrl, inp, 1.0, factor)
+        await _move(ctrl, inp, 0.0, factor)
 
 
 async def half_n_half(ctrl, inp):
@@ -109,8 +141,21 @@ async def half_n_half(ctrl, inp):
         await _move(ctrl, inp, 0.0, in_speed)
 
 
+async def deeper(ctrl, inp):
+    """Progressively deeper strokes. Sensation controls step count (2-32)."""
+    MIN_STEPS = 2
+    MAX_STEPS = 32
+    while True:
+        num_steps = max(
+            1, round(_scale(inp.sensation, -1.0, 1.0, MIN_STEPS, MAX_STEPS))
+        )
+        for step in range(1, num_steps + 1):
+            await _move(ctrl, inp, step / num_steps)
+            await _move(ctrl, inp, 0.0)
+
+
 async def stop_n_go(ctrl, inp):
-    """Stroke N times then pause. Sensation controls pause duration (100ms-10s)."""
+    """Stroke N times then pause. Sensation controls pause duration."""
     MAX_STROKES = 5
     MIN_DELAY_MS = 100
     MAX_DELAY_MS = 10_000
@@ -120,7 +165,9 @@ async def stop_n_go(ctrl, inp):
         for _ in range(num_strokes):
             await _move(ctrl, inp, 1.0)
             await _move(ctrl, inp, 0.0)
-        delay_ms = round(_scale(inp.sensation, -1.0, 1.0, MIN_DELAY_MS, MAX_DELAY_MS))
+        delay_ms = round(
+            _scale(inp.sensation, -1.0, 1.0, MIN_DELAY_MS, MAX_DELAY_MS)
+        )
         await asyncio.sleep_ms(delay_ms)
         if counting_up:
             if num_strokes >= MAX_STROKES:
@@ -135,21 +182,27 @@ async def stop_n_go(ctrl, inp):
             num_strokes -= 1
 
 
-async def teasing_pounding(ctrl, inp):
-    """Alternating strokes with asymmetric in/out speed. Sensation controls ratio."""
-    MAX_SCALING = 5.0
-    BASE_SPEED = 1.0 / MAX_SCALING
+async def insist(ctrl, inp):
+    """Short rapid strokes. Sensation shifts position and stroke length.
+
+    Positive sensation → strokes wander toward shallow end.
+    Negative sensation → strokes wander toward deep end.
+    Higher |sensation| → shorter effective stroke (more vibrational).
+    """
     while True:
         sensation = inp.sensation
-        factor = _scale(abs(sensation), 0.0, 1.0, 1.0, MAX_SCALING)
-        if sensation > 0.0:
-            out_speed, in_speed = BASE_SPEED, BASE_SPEED * factor
-        elif sensation < 0.0:
-            out_speed, in_speed = BASE_SPEED * factor, BASE_SPEED
-        else:
-            out_speed, in_speed = BASE_SPEED, BASE_SPEED
-        await _move(ctrl, inp, 1.0, out_speed)
-        await _move(ctrl, inp, 0.0, in_speed)
+        abs_s = abs(sensation)
+        # Stroke shrinks to ~5% at max |sensation|
+        stroke_frac = max(0.05, 1.0 - abs_s * 0.9)
+        # Center shifts: +1→0.1 (shallow), -1→0.9 (deep)
+        center = 0.5 - sensation * 0.4
+        lo = max(0.0, center - stroke_frac * 0.5)
+        hi = min(1.0, center + stroke_frac * 0.5)
+        await _move(ctrl, inp, hi)
+        await _move(ctrl, inp, lo)
 
 
-PATTERN_FUNCS = [simple_stroke, deeper, half_n_half, stop_n_go, teasing_pounding]
+PATTERN_FUNCS = [
+    simple_stroke, teasing_pounding, robo_stroke, half_n_half,
+    deeper, stop_n_go, insist,
+]
