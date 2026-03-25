@@ -1,12 +1,21 @@
-# OSSM-mpy
+# OSSM-micropython
 
-MicroPython firmware for the OSSM on RP2350 (Raspberry Pi Pico 2 W). Drives a stepper motor via step/direction pulse signals using [stepper-lib](https://github.com/bikeNomad/stepper-lib). BLE remote control uses the standard OSSM protocol, compatible with the Possum app, M5 remote, and `configure-ossm`.
+MicroPython firmware for the OSSM (Open Source Sex Machine) on RP2350 (Raspberry Pi Pico 2 W).
+Drives a stepper motor via step/direction pulse signals using [stepper-lib](https://github.com/bikeNomad/stepper-lib).
+BLE remote control uses the standard OSSM protocol, compatible with the RADR remote (https://github.com/researchanddesire/radr-wireless-remote.git)
 
 ## Hardware
 
 - **Board**: Raspberry Pi Pico 2 W (RP2350 + CYW43 BLE/WiFi)
-- **Motor interface**: Step + Direction + Enable signals to any stepper driver (e.g. TB6600, DM542)
-- **Homing**: NC (normally-closed) limit switch
+- **Motor interface**: Step + Direction + Enable signals to stepper driver.
+- **Homing**: NC (normally-closed) or NO (normally-open) limit switch connected to GND and GPIO
+
+## Differences from the stock OSSM firmware
+
+- **No Display**: all BLE
+- **No Wired Remote**: all BLE
+- **No Wifi OTA Update**: updating is via `mpremote` currently.
+- **Only Step/Direction Interface**: CAN/RS485 currently not implemented
 
 ### Default pin assignments
 

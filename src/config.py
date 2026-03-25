@@ -4,9 +4,10 @@ DIR_PIN = 3
 ENABLE_PIN = 4
 HOMING_PIN = 5
 
-# Homing sensor: NC (normally-closed) limit switch
-# activeState=0 means the pin reads 0 when the sensor is triggered
-HOMING_ACTIVE_STATE = 0
+# Homing sensor: NC (normally-closed) limit switch connected from HOMING_PIN to GND
+# activeState=1 means the pin reads 1 when the sensor is triggered
+# If a NO (normally-open) limit switch, change HOMING_ACTIVE_STATE to 0
+HOMING_ACTIVE_STATE = 1
 HOMING_DIRECTION = "down"  # direction of travel toward the home sensor
 # Position (mm) that the home sensor edge represents in the motion coordinate
 # space. 0.0 means the sensor is at position 0 (MIN_MM is then the distance
