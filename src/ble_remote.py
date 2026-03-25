@@ -66,15 +66,31 @@ def _register_services():
 
 
 class BleRemote:
+    # Debounce window for state notifications (ms).
+    _NOTIFY_DEBOUNCE_MS = 50
+
     def __init__(self, engine):
         self._engine = engine
         _register_services()
         self._connection = None
         self._play_task = None
+        self._notify_task = None
         engine.set_state_callback(self._on_state_change)
 
     def _on_state_change(self):
-        """Send a state notification to the connected central, if any."""
+        """Schedule a debounced state notification to the connected central."""
+        if self._connection is None:
+            return
+        if self._notify_task is not None:
+            self._notify_task.cancel()
+        self._notify_task = asyncio.create_task(self._deferred_notify())
+
+    async def _deferred_notify(self):
+        """Send a state notification after a short debounce delay."""
+        try:
+            await asyncio.sleep_ms(self._NOTIFY_DEBOUNCE_MS)
+        except asyncio.CancelledError:
+            return
         if self._connection is None:
             return
         data = json.dumps(self._engine.state_dict()).encode()
@@ -193,6 +209,9 @@ class BleRemote:
 
             t_primary.cancel()
             t_speed.cancel()
+            if self._notify_task is not None:
+                self._notify_task.cancel()
+                self._notify_task = None
             for t in (t_primary, t_speed):
                 try:
                     await t
