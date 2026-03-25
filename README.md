@@ -1,7 +1,8 @@
 # OSSM-micropython
 
-MicroPython firmware for the OSSM (Open Source Sex Machine) on RP2350 (Raspberry Pi Pico 2 W).
-Drives a stepper motor via step/direction pulse signals using [stepper-lib](https://github.com/bikeNomad/stepper-lib).
+MicroPython firmware compatible with the OSSM (Open Source Sex Machine) on RP2350 (Raspberry Pi Pico 2 W).
+Drives a stepper motor via step/direction pulse signals using [stepper-lib](https://github.com/bikeNomad/stepper-lib), instead of the RS485 of the OSSM (though I may add that as well).
+
 BLE remote control uses the standard OSSM protocol, compatible with the RADR remote (https://github.com/researchanddesire/radr-wireless-remote.git)
 
 ## Hardware
