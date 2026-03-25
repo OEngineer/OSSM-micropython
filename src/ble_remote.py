@@ -70,6 +70,7 @@ class BleRemote:
         self._engine = engine
         _register_services()
         self._connection = None
+        self._play_task = None
         engine.set_state_callback(self._on_state_change)
 
     def _on_state_change(self):
@@ -115,7 +116,9 @@ class BleRemote:
                 self._engine.update_input("buffer", val / 100.0)
             elif field == "pattern":
                 idx = val % len(PATTERN_FUNCS)
-                asyncio.create_task(self._engine.play(idx))
+                if self._play_task is not None:
+                    self._play_task.cancel()
+                self._play_task = asyncio.create_task(self._engine.play(idx))
 
         elif cmd == "go:strokeEngine" or cmd == "go:simplePenetration":
             self._engine.home_and_play()
