@@ -70,7 +70,7 @@ mpremote cp main.py :/main.py
 
 ## BLE protocol
 
-Compatible with the `ossm/` reference firmware. All commands are UTF-8 strings written to the PRIMARY_COMMAND characteristic.
+Compatible with the https://github.com/KinkyMakers/OSSM-hardware.git `main` branch reference firmware.
 
 ### Commands
 

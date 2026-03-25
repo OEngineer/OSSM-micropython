@@ -8,8 +8,8 @@ Dependencies (copy to /lib/ on the device):
   aioble/        — from micropython-lib bluetooth/aioble
 
 Deploy:
-  mpremote cp -r src/ :/src/
-  mpremote cp main.py :/main.py
+  mpremote cp -r src/ :
+  mpremote cp main.py :
 """
 
 import asyncio

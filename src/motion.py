@@ -65,6 +65,8 @@ class MotionController:
             activeState=config.HOMING_ACTIVE_STATE,
             timeout=30,
         )
+        # Map sensor edge to its configured position in the motion coordinate space
+        self._stepper.position = config.HOME_SENSOR_MM
         # Move to min_mm so we start in a safe position
         self._stepper.maxSpeed = config.MAX_SPEED_MM_S * 0.3
         self._axis.moveTo(config.MIN_MM)

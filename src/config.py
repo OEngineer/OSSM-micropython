@@ -8,6 +8,11 @@ HOMING_PIN = 5
 # activeState=0 means the pin reads 0 when the sensor is triggered
 HOMING_ACTIVE_STATE = 0
 HOMING_DIRECTION = "down"  # direction of travel toward the home sensor
+# Position (mm) that the home sensor edge represents in the motion coordinate
+# space. 0.0 means the sensor is at position 0 (MIN_MM is then the distance
+# from sensor to the start of the usable range). Negative values place the
+# sensor before the motion origin; positive values place it inside the range.
+HOME_SENSOR_MM = 0.0
 
 # Mechanical configuration
 PULLEY_TEETH = 20
