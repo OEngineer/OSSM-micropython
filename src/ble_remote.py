@@ -4,12 +4,15 @@ Compatible with the Possum app, M5 remote, and configure-ossm tool.
 Uses the same service/characteristic UUIDs as the ossm/ reference firmware.
 
 Command format (written to PRIMARY_COMMAND or SPEED_KNOB):
-  set:<field>:<0-100>   — update a PatternInput field
-  go:strokeEngine       — home motor then play current pattern
-  go:menu               — stop
+  set:<field>:<0-100>        — update a PatternInput field
+  go:strokeEngine            — home motor then play current pattern
+  go:simplePenetration       — same as go:strokeEngine
+  go:streaming               — home then enter streaming mode
+  go:menu                    — stop
+  stream:<pos>:<ms>          — move to pos (0-100) in <ms> milliseconds
 
 State notifications (sent on CURRENT_STATE after any change):
-  JSON: {"state": "playing", "pattern": 0, "speed": 75, ...}
+  JSON: {"timestamp": ..., "state": "playing", "pattern": 0, ...}
 """
 
 import asyncio
@@ -18,7 +21,7 @@ import bluetooth
 import aioble
 
 from . import config
-from .patterns import PATTERNS
+from .patterns import PATTERNS, PATTERN_FUNCS
 
 # Initialised once by _register_services()
 _service = None
@@ -108,14 +111,30 @@ class BleRemote:
                 # BLE 0–100 → internal -1.0–1.0
                 scaled = (val / 100.0) * 2.0 - 1.0
                 self._engine.update_input("sensation", scaled)
+            elif field == "buffer":
+                self._engine.update_input("buffer", val / 100.0)
             elif field == "pattern":
-                asyncio.create_task(self._engine.play(val))
+                idx = val % len(PATTERN_FUNCS)
+                asyncio.create_task(self._engine.play(idx))
 
-        elif cmd == "go:strokeEngine":
+        elif cmd == "go:strokeEngine" or cmd == "go:simplePenetration":
             self._engine.home_and_play()
+
+        elif cmd == "go:streaming":
+            self._engine.start_streaming()
 
         elif cmd == "go:menu":
             asyncio.create_task(self._engine.stop())
+
+        elif cmd.startswith("stream:"):
+            parts = cmd.split(":")
+            if len(parts) == 3:
+                try:
+                    pos = int(parts[1])
+                    time_ms = int(parts[2])
+                    self._engine.stream_target(pos / 100.0, time_ms)
+                except ValueError:
+                    pass
 
     async def _watch_primary(self, connection):
         """Task: relay writes on PRIMARY_COMMAND to the command handler."""
