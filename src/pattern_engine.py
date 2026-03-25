@@ -121,13 +121,21 @@ class PatternEngine:
                 )
             except asyncio.TimeoutError:
                 continue
+            # Apply depth/stroke windowing matching upstream streaming.cpp.
+            # BLE pos_frac: 0.0 = deep end (fully extended), 1.0 = shallow end.
+            # maxStroke = min(stroke, depth) caps stroke at depth.
+            # depth_offset positions the window within the full travel range.
+            inp = self.inp
+            max_stroke = min(inp.stroke, inp.depth)
+            depth_offset = (1.0 - max_stroke) * inp.depth
+            target = (1.0 - pos_frac) * max_stroke + depth_offset
             current = self._ctrl.position_frac
-            dist_mm = abs(pos_frac - current) * range_mm
+            dist_mm = abs(target - current) * range_mm
             if time_ms > 0 and dist_mm > 0:
                 speed_frac = (dist_mm * 1000 / time_ms) / config.MAX_SPEED_MM_S
             else:
                 speed_frac = 1.0
-            self._ctrl.move_to(pos_frac, max(0.01, min(1.0, speed_frac)))
+            self._ctrl.move_to(target, max(0.01, min(1.0, speed_frac)))
             await self._ctrl.wait_done()
 
     # ------------------------------------------------------------------ #
