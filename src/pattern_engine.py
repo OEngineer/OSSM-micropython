@@ -121,32 +121,41 @@ class PatternEngine:
     async def _streaming_pattern(self):
         """Consume stream targets and execute them.
 
-        When self.latency_comp is True, applies the upstream buffer-based
-        timing correction: adjusts each move duration to absorb jitter,
-        shortening by up to 1/4 or extending by up to buffer*2 ms.
+        Matches upstream streaming.cpp behavior:
+        - Same-direction moves retarget mid-move (no gap)
+        - Direction changes wait for the current move to finish
+        - Stale queued commands are skipped (only latest used)
+        - Latency compensation adjusts move duration for jitter
         """
         range_mm = config.MAX_MM - config.MIN_MM
         # Latency compensation state
-        best_ms = time.ticks_ms()   # ideal-timeline clock
-        last_time_ms = 0            # nominal duration of the previous move
+        best_ms = time.ticks_ms()
+        last_time_ms = 0
         try:
             while True:
+                # Block until at least one command arrives
                 try:
-                    pos_frac, time_ms, set_ms = await asyncio.wait_for_ms(
-                        self._stream_queue.get(), 5000
+                    pos_frac, time_ms, set_ms = (
+                        await asyncio.wait_for_ms(
+                            self._stream_queue.get(), 5000
+                        )
                     )
                 except asyncio.TimeoutError:
-                    # Long idle — reset the ideal timeline so stale lag
-                    # doesn't corrupt the next burst of moves.
                     best_ms = time.ticks_ms()
                     last_time_ms = 0
                     continue
-                # Apply depth/stroke windowing matching upstream streaming.cpp.
-                # BLE pos_frac: 0.0 = minimum (shallow/retracted), 1.0 = maximum (deep/extended).
-                # maxStroke = min(stroke, depth) caps stroke at depth.
-                # depth_offset positions the window within the full travel range.
+
+                # Drain queue — use only the freshest command
+                while True:
+                    try:
+                        pos_frac, time_ms, set_ms = (
+                            self._stream_queue.get_nowait()
+                        )
+                    except Exception:
+                        break
+
+                # Depth/stroke windowing (upstream streaming.cpp)
                 inp = self.inp
-                # Sensation → accel fraction (upstream 0-100 maps to 0-1).
                 sensation_frac = max(
                     0.01, (inp.sensation + 1.0) / 2.0
                 )
@@ -156,10 +165,7 @@ class PatternEngine:
                 current = self._ctrl.position_frac
                 dist_mm = abs(target - current) * range_mm
 
-                # Gap B: latency compensation (upstream streaming.cpp lines 67-85).
-                # Measures how far behind the ideal timeline we are and shortens or
-                # extends the move time to stay synchronised with the client clock.
-                # inp.buffer (0-1) maps to upstream settings.buffer (0-100) in ms.
+                # Latency compensation
                 adjusted_time_ms = time_ms
                 if self.latency_comp and last_time_ms > 0:
                     now_ms = time.ticks_ms()
@@ -167,54 +173,68 @@ class PatternEngine:
                         now_ms, best_ms
                     )
                     buffer_ms = inp.buffer * 100.0
-                    mincomp = int(min(buffer_ms * 2, last_time_ms))
-                    # Lag sanity: time from RX to ideal timeline
+                    mincomp = int(
+                        min(buffer_ms * 2, last_time_ms)
+                    )
                     lag = time.ticks_diff(set_ms, best_ms)
                     if lag < 0 or lag > mincomp * 10:
-                        # Timeline drifted too far — reset
                         best_ms = set_ms
-                        lag = 0
                         offset = 0
                     else:
                         offset = mincomp - current_buffer_ms
                         if offset < 0:
-                            offset = max(-(time_ms // 4), offset)
+                            offset = max(
+                                -(time_ms // 4), offset
+                            )
                     adjusted_time_ms = max(1, time_ms + offset)
                 else:
                     best_ms = time.ticks_ms()
 
-                # Advance ideal timeline by nominal (unadjusted) duration.
                 best_ms = time.ticks_add(best_ms, time_ms)
                 last_time_ms = time_ms
 
                 time_s = adjusted_time_ms / 1000.0
                 accel_mm = sensation_frac * config.MAX_ACCEL_MM_S2
                 speed_lim = inp.velocity * config.MAX_SPEED_MM_S
-                if time_s > 0.01 and dist_mm > 1.0 / config.STEPS_PER_MM:
-                    # Max feasible distance given accel and time
-                    max_d = accel_mm * (time_s / 2) ** 2
-                    max_d = min(max_d, speed_lim * time_s)
-                    if dist_mm > max_d and max_d > 0:
-                        # Clamp distance, adjust target
-                        ratio = max_d / dist_mm
-                        target = current + (target - current) * ratio
-                        dist_mm = max_d
-                    # Triangular profile: speed = 2*dist/time
-                    req_spd = (2 * dist_mm) / time_s
-                    req_spd = max(1.0, min(speed_lim, req_spd))
-                    # Trapezoid proportion for accel calc
-                    vt = req_spd * time_s
-                    prop = max(0.01, -((2 * dist_mm - 2 * vt) / vt))
-                    req_acc = req_spd / (time_s * prop / 2)
-                    req_acc = max(1.0, min(accel_mm, req_acc))
-                    speed_frac = req_spd / config.MAX_SPEED_MM_S
-                    accel_frac = req_acc / config.MAX_ACCEL_MM_S2
-                    self._ctrl.update_accel(accel_frac)
-                    speed = max(0.01, min(1.0, speed_frac))
+
+                if speed_lim < 1.0 or accel_mm < 1.0:
+                    continue  # skip if speed/accel too low
+
+                step_mm = 1.0 / config.STEPS_PER_MM
+                if time_s <= 0.01 or dist_mm <= step_mm:
+                    continue
+
+                # Clamp distance to what's feasible
+                max_d = accel_mm * (time_s / 2) ** 2
+                max_d = min(max_d, speed_lim * time_s)
+                if dist_mm > max_d and max_d > step_mm:
+                    ratio = max_d / dist_mm
+                    target = current + (target - current) * ratio
+                    dist_mm = max_d
+
+                # Trapezoidal motion profile
+                req_spd = (2 * dist_mm) / time_s
+                req_spd = max(1.0, min(speed_lim, req_spd))
+                vt = req_spd * time_s
+                prop = max(
+                    0.01,
+                    -((2 * dist_mm - 2 * vt) / vt),
+                )
+                req_acc = req_spd / (time_s * prop / 2)
+                req_acc = max(1.0, min(accel_mm, req_acc))
+
+                speed_frac = req_spd / config.MAX_SPEED_MM_S
+                accel_frac = req_acc / config.MAX_ACCEL_MM_S2
+                self._ctrl.update_accel(accel_frac)
+                speed = max(0.01, min(1.0, speed_frac))
+
+                # Try mid-move retarget (same direction)
+                if not self._ctrl.retarget(target, speed):
+                    # Direction change — wait then start fresh
                     await self._ctrl.wait_done()
                     self._ctrl.move_to(target, speed)
         finally:
-            self._ctrl.update_accel(1.0)  # restore max accel on exit
+            self._ctrl.update_accel(1.0)
 
     # ------------------------------------------------------------------ #
     # Internal                                                              #
