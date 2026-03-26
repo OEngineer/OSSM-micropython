@@ -144,11 +144,10 @@ class PatternEngine:
                 # maxStroke = min(stroke, depth) caps stroke at depth.
                 # depth_offset positions the window within the full travel range.
                 inp = self.inp
-                # Gap A (fixed): apply sensation as acceleration limit (upstream
-                # streaming.cpp line 92: accelLimit = maxAccel * sensation/100).
-                # inp.sensation is [-1, 1]; map to [0, 1] matching upstream 0-100.
-                sensation_frac = max(0.01, (inp.sensation + 1.0) / 2.0)
-                self._ctrl.update_accel(sensation_frac)
+                # Sensation → accel fraction (upstream 0-100 maps to 0-1).
+                sensation_frac = max(
+                    0.01, (inp.sensation + 1.0) / 2.0
+                )
                 max_stroke = min(inp.stroke, inp.depth)
                 depth_offset = (1.0 - max_stroke) * inp.depth
                 target = pos_frac * max_stroke + depth_offset
@@ -174,17 +173,33 @@ class PatternEngine:
                 best_ms = time.ticks_add(best_ms, time_ms)
                 last_time_ms = time_ms
 
-                if adjusted_time_ms > 0 and dist_mm > 0:
-                    speed_frac = (
-                        (dist_mm * 1000 / adjusted_time_ms) / config.MAX_SPEED_MM_S
-                    )
-                else:
-                    speed_frac = 1.0
-                speed = max(0.01, min(1.0, speed_frac))
-                if not self._ctrl.retarget(target, speed):
-                    # Direction change — must wait for current move to finish.
-                    await self._ctrl.wait_done()
-                    self._ctrl.move_to(target, speed)
+                time_s = adjusted_time_ms / 1000.0
+                accel_mm = sensation_frac * config.MAX_ACCEL_MM_S2
+                speed_lim = inp.velocity * config.MAX_SPEED_MM_S
+                if time_s > 0.01 and dist_mm > 1.0 / config.STEPS_PER_MM:
+                    # Max feasible distance given accel and time
+                    max_d = accel_mm * (time_s / 2) ** 2
+                    max_d = min(max_d, speed_lim * time_s)
+                    if dist_mm > max_d and max_d > 0:
+                        # Clamp distance, adjust target
+                        ratio = max_d / dist_mm
+                        target = current + (target - current) * ratio
+                        dist_mm = max_d
+                    # Triangular profile: speed = 2*dist/time
+                    req_spd = (2 * dist_mm) / time_s
+                    req_spd = max(1.0, min(speed_lim, req_spd))
+                    # Trapezoid proportion for accel calc
+                    vt = req_spd * time_s
+                    prop = max(0.01, -((2 * dist_mm - 2 * vt) / vt))
+                    req_acc = req_spd / (time_s * prop / 2)
+                    req_acc = max(1.0, min(accel_mm, req_acc))
+                    speed_frac = req_spd / config.MAX_SPEED_MM_S
+                    accel_frac = req_acc / config.MAX_ACCEL_MM_S2
+                    self._ctrl.update_accel(accel_frac)
+                    speed = max(0.01, min(1.0, speed_frac))
+                    if not self._ctrl.retarget(target, speed):
+                        await self._ctrl.wait_done()
+                        self._ctrl.move_to(target, speed)
         finally:
             self._ctrl.update_accel(1.0)  # restore max accel on exit
 
