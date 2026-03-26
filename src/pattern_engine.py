@@ -140,7 +140,7 @@ class PatternEngine:
                     last_time_ms = 0
                     continue
                 # Apply depth/stroke windowing matching upstream streaming.cpp.
-                # BLE pos_frac: 0.0 = deep end (fully extended), 1.0 = shallow end.
+                # BLE pos_frac: 0.0 = minimum (shallow/retracted), 1.0 = maximum (deep/extended).
                 # maxStroke = min(stroke, depth) caps stroke at depth.
                 # depth_offset positions the window within the full travel range.
                 inp = self.inp
@@ -151,7 +151,7 @@ class PatternEngine:
                 self._ctrl.update_accel(sensation_frac)
                 max_stroke = min(inp.stroke, inp.depth)
                 depth_offset = (1.0 - max_stroke) * inp.depth
-                target = (1.0 - pos_frac) * max_stroke + depth_offset
+                target = pos_frac * max_stroke + depth_offset
                 current = self._ctrl.position_frac
                 dist_mm = abs(target - current) * range_mm
 
