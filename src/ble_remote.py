@@ -19,6 +19,7 @@ import asyncio
 import json
 import bluetooth
 import aioble
+import sys
 
 from . import config
 from .patterns import PATTERNS, PATTERN_FUNCS
@@ -105,6 +106,7 @@ class BleRemote:
             idx = self._engine.pattern_index
             _pattern_desc_char.write(PATTERNS[idx][1].encode())
         except Exception as e:
+            sys.print_exception(e)
             print(f"BLE notify error: {e}")
 
     def _handle_command(self, data):
