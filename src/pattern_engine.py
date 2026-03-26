@@ -180,8 +180,11 @@ class PatternEngine:
                     )
                 else:
                     speed_frac = 1.0
-                self._ctrl.move_to(target, max(0.01, min(1.0, speed_frac)))
-                await self._ctrl.wait_done()
+                speed = max(0.01, min(1.0, speed_frac))
+                if not self._ctrl.retarget(target, speed):
+                    # Direction change — must wait for current move to finish.
+                    await self._ctrl.wait_done()
+                    self._ctrl.move_to(target, speed)
         finally:
             self._ctrl.update_accel(1.0)  # restore max accel on exit
 

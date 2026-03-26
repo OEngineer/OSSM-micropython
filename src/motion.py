@@ -96,6 +96,31 @@ class MotionController:
             self._last_target = mm
         self._axis.moveTo(mm)
 
+    def retarget(self, position_frac, speed_frac):
+        """Update target mid-move for same-direction moves.
+
+        If the motor is moving in the same direction as the new target,
+        updates the stepper's internal target and triggers a replan via
+        the speed setter — no stop/start gap.  Returns True if retargeted,
+        False if a direction change is needed (caller should wait_done first).
+        """
+        mm = self._frac_to_mm(position_frac)
+        mm = max(config.MIN_MM, min(config.MAX_MM, mm))
+        if not self._stepper.moving:
+            self.move_to(position_frac, speed_frac)
+            return True
+        current = self._stepper.position
+        old_dir = 1 if self._stepper._target >= current else -1
+        new_dir = 1 if mm >= current else -1
+        if old_dir != new_dir:
+            return False
+        self._stepper._target = mm
+        # Setting maxSpeed triggers _replan() which rebuilds the profile
+        # from current position/speed toward the new target.
+        self._stepper.maxSpeed = self._frac_to_speed(speed_frac)
+        self._last_target = mm
+        return True
+
     def update_speed(self, speed_frac):
         """Update speed mid-move — stepper-lib replans automatically."""
         self._stepper.maxSpeed = self._frac_to_speed(speed_frac)
