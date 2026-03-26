@@ -10,6 +10,7 @@ install_dependencies:
 	mpremote mip install github:bikeNomad/micropython-rp2-smartStepper
 	mpremote mip install aioble
 	mpremote mip install github:peterhinch/micropython-async/v3/primitives
+	mpremote mip install aiorepl
 	
 
 # vim: ts=4 sw=4 noet

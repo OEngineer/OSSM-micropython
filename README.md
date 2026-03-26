@@ -65,6 +65,7 @@ Install to `/lib/` on the device:
 |----------------|--------------------------------------------------------------------------------------|
 | `smartstepper` | `mpremote mip install github:bikeNomad/micropython-rp2-smartStepper`                 |
 | `aioble`       | `mpremote mip install aioble`                                                        |
+| `aiorepl`      | `mpremote mip install aiorepl`                                                       |
 | `primitives`   | `mpremote mip install github:peterhinch/micropython-async/v3/primitives`             |
 
 
@@ -83,6 +84,7 @@ Then, copy the Python files. You can just do `make install`. Or:
 # Install dependencies
 mpremote mip install github:bikeNomad/micropython-rp2-smartStepper
 mpremote mip install aioble
+mpremote mip install aiorepl
 mpremote mip install github:peterhinch/micropython-async/v3/primitives
 
 # Copy firmware
