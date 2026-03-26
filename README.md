@@ -70,6 +70,15 @@ Install to `/lib/` on the device:
 
 ## Deploying
 
+First, install the most recent version of MicroPython on the device:
+  - put the device into UF2 install mode by plugging in the USB while holding the BOOT switch.
+  - Copy the Micropython UF2 image to the device:
+```
+cp Micropython-xxx.uf2 /Volumes/RP2350
+```
+
+Then, copy the Python files. You can just do `make install`. Or:
+
 ```bash
 # Install dependencies
 mpremote mip install github:bikeNomad/micropython-rp2-smartStepper
@@ -77,8 +86,8 @@ mpremote mip install aioble
 mpremote mip install github:peterhinch/micropython-async/v3/primitives
 
 # Copy firmware
-mpremote cp -r src/ :/src/
-mpremote cp main.py :/main.py
+mpremote cp -r src/ :
+mpremote cp main.py :
 ```
 
 ## BLE protocol
@@ -171,6 +180,6 @@ Speed changes from BLE take effect within 20 ms via stepper-lib's automatic mid-
 
 ## Reference
 
-- [ossm/ Rust firmware](../ossm/) — primary reference (Embassy + Ruckig + RS485 Modbus RTU)
+- [OSSM hardware and firmware](https://github.com/KinkyMakers/OSSM-hardware.git)
 - [stepper-lib](https://github.com/bikeNomad/stepper-lib) — PIO/DMA pulse generation for RP2040/RP2350
 - [OSSM guides](https://docs.researchanddesire.com/ossm/)

@@ -12,6 +12,9 @@ class PatternInput:
         self.velocity = 0.0   # 0.0–1.0: fraction of max speed
         self.sensation = 0.0  # -1.0 to 1.0: pattern-specific modifier
         self.buffer = 0.0     # 0.0–1.0: streaming buffer
+        
+    def __repr__(self):
+        return f"PatternInput(depth={self.depth}, stroke={self.stroke}, velocity={self.velocity}, sensation={self.sensation}, buffer={self.buffer})"
 
 
 # Pattern metadata: (name, description)
@@ -53,18 +56,29 @@ def _pattern_pos(inp, frac):
 
     0.0 → shallow end (depth - stroke), 1.0 → deep end (depth).
     Mirrors compute_command() in the reference firmware.
+
+    When depth is not set (0.0), falls back to stroke as the deep end so
+    that apps sending only set:stroke still produce motion.
     """
-    shallow = max(0.0, inp.depth - inp.stroke)
-    return shallow + frac * (inp.depth - shallow)
+    depth = max(inp.depth, inp.stroke)
+    shallow = max(0.0, depth - inp.stroke)
+    return shallow + frac * (depth - shallow)
 
 
 async def _move(ctrl, inp, position_frac, speed_factor=1.0):
     """Move to position_frac within the stroke range and wait.
 
     Polls inp.velocity every 20 ms so speed changes take effect mid-move.
+    When velocity drops to zero, stops the motor and waits until it resumes,
+    then re-issues the move to the original target.
     Propagates CancelledError to support task cancellation.
     """
     pos = _pattern_pos(inp, position_frac)
+
+    # Don't start a move while paused — wait for a non-zero velocity first.
+    while inp.velocity == 0.0:
+        await asyncio.sleep_ms(20)
+
     spd = inp.velocity * max(0.0, min(1.0, speed_factor))
     ctrl.move_to(pos, spd)
 
@@ -73,8 +87,19 @@ async def _move(ctrl, inp, position_frac, speed_factor=1.0):
         while ctrl.moving:
             await asyncio.sleep_ms(20)
             if inp.velocity != last_velocity:
-                ctrl.update_speed(inp.velocity * speed_factor)
+                if inp.velocity == 0.0:
+                    ctrl.stop()
+                    # Wait for deceleration to complete, then for resume.
+                    while ctrl.moving:
+                        await asyncio.sleep_ms(20)
+                    while inp.velocity == 0.0:
+                        await asyncio.sleep_ms(20)
+                    # Re-issue the move to the original target at the new speed.
+                    ctrl.move_to(pos, inp.velocity * speed_factor)
+                else:
+                    ctrl.update_speed(inp.velocity * speed_factor)
                 last_velocity = inp.velocity
+        await asyncio.sleep_ms(0)  # always yield; prevents starvation on zero-distance moves
     except asyncio.CancelledError:
         ctrl.stop()
         raise

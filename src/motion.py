@@ -38,32 +38,36 @@ class MotionController:
 
         self._homing_pin = Pin(config.HOMING_PIN, Pin.IN, Pin.PULL_UP)
         self.state = MotionState.DISABLED
+        self._last_target = None
 
     # ------------------------------------------------------------------ #
     # State transitions                                                     #
     # ------------------------------------------------------------------ #
 
     def enable(self):
+        print("Enabling")
         self._axis.enable()
         if self.state == MotionState.DISABLED:
             self.state = MotionState.ENABLED
 
     def disable(self):
+        print("Disabling")
         self._axis.stop(emergency=True)
         self._axis.disable()
         self.state = MotionState.DISABLED
 
     async def home(self):
+        print("Homing")
         self.state = MotionState.HOMING
         self._axis.enable()
         await homing_mod.home(
             self._stepper,
             self._homing_pin,
-            fastSpeed=50.0,
-            slowSpeed=5.0,
+            fastSpeed=config.FAST_HOMING_SPEED_MM_S,
+            slowSpeed=config.SLOW_HOMING_SPEED_MM_S,
             direction=config.HOMING_DIRECTION,
             activeState=config.HOMING_ACTIVE_STATE,
-            timeout=30,
+            timeout=(config.MAX_MM / config.FAST_HOMING_SPEED_MM_S) + 5,
         )
         # Map sensor edge to its configured position in the motion coordinate space
         self._stepper.position = config.HOME_SENSOR_MM
@@ -72,6 +76,7 @@ class MotionController:
         self._axis.moveTo(config.MIN_MM)
         await self._axis.wait_done()
         self.state = MotionState.READY
+        print("Homed")
 
     # ------------------------------------------------------------------ #
     # Motion                                                                #
@@ -86,6 +91,9 @@ class MotionController:
         mm = self._frac_to_mm(position_frac)
         mm = max(config.MIN_MM, min(config.MAX_MM, mm))
         self._stepper.maxSpeed = self._frac_to_speed(speed_frac)
+        if self._last_target != mm:
+            print(f"Moving to {mm}mm at {self._stepper.maxSpeed}mm/s")  # remove DEBUG
+            self._last_target = mm
         self._axis.moveTo(mm)
 
     def update_speed(self, speed_frac):
@@ -100,7 +108,8 @@ class MotionController:
         await self._axis.wait_done()
 
     def stop(self, emergency=False):
-        self._axis.stop(emergency=emergency)
+        if self._stepper.moving:
+            self._axis.stop(emergency=emergency)
 
     # ------------------------------------------------------------------ #
     # Properties                                                            #

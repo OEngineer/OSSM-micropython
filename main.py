@@ -13,20 +13,31 @@ Deploy:
 """
 
 import asyncio
+import aiorepl
 
 from src.motion import MotionController
 from src.pattern_engine import PatternEngine
 from src.ble_remote import BleRemote
 
+# make these available to aiorepl as globals
+ctrl = MotionController()
+engine = PatternEngine(ctrl)
+ble = BleRemote(engine)
+
+# accessors for aiorepl
+aiorepl_globals = {
+    "ctrl": ctrl,
+    "engine": engine,
+    "ble": ble,
+    "asyncio": asyncio,
+}
+repl = asyncio.create_task(aiorepl.task(aiorepl_globals))
 
 async def main():
-    ctrl = MotionController()
-    engine = PatternEngine(ctrl)
-    ble = BleRemote(engine)
-
     await asyncio.gather(
         engine.run(),
         ble.run(),
+        repl
     )
 
 

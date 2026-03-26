@@ -5,7 +5,7 @@ import random
 import time
 
 from primitives.queue import Queue
-from .patterns import PatternInput, PATTERN_FUNCS
+from .patterns import PatternInput, PATTERN_FUNCS, PATTERNS
 from . import config
 
 
@@ -23,6 +23,7 @@ class PatternEngine:
         self._ctrl = ctrl
         self.inp = PatternInput()
         self.state = EngineState.IDLE
+        self._prior_state = self.state
         self.pattern_index = 0
         self._task = None
         self._state_cb = None  # called on state/inp changes (for BLE notify)
@@ -34,6 +35,9 @@ class PatternEngine:
         self._state_cb = cb
 
     def _notify(self):
+        if self._prior_state != self.state:
+            print(f"Engine state: {self.state}")
+            self._prior_state = self.state
         if self._state_cb:
             self._state_cb()
 
@@ -78,7 +82,7 @@ class PatternEngine:
     def update_input(self, field, value):
         """Update a PatternInput field live; velocity takes immediate effect."""
         setattr(self.inp, field, value)
-        if field == "velocity" and self.state == EngineState.PLAYING:
+        if field == "velocity" and self.state == EngineState.PLAYING and value > 0.0:
             self._ctrl.update_speed(value)
         self._notify()
 
@@ -191,6 +195,7 @@ class PatternEngine:
         self._task = asyncio.create_task(
             PATTERN_FUNCS[self.pattern_index](self._ctrl, self.inp)
         )
+        print(f"Pattern {PATTERNS[self.pattern_index][0]} started: {PATTERNS[self.pattern_index][1]}")
 
     async def _cancel_task(self):
         if self._task is not None:
@@ -202,6 +207,7 @@ class PatternEngine:
             except Exception as e:
                 print(f"Pattern task error: {e}")
             self._task = None
+        await self._ctrl.wait_done()  # ensure motor finishes decelerating before next move
 
     async def run(self):
         """Monitor loop — restart task if it exits unexpectedly."""
