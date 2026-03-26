@@ -112,7 +112,9 @@ class PatternEngine:
     def stream_target(self, position_frac, time_ms):
         """Queue a streaming position target (called by BLE handler)."""
         try:
-            self._stream_queue.put_nowait((position_frac, time_ms))
+            self._stream_queue.put_nowait(
+                (position_frac, time_ms, time.ticks_ms())
+            )
         except Exception:
             pass  # drop if queue full
 
@@ -130,7 +132,7 @@ class PatternEngine:
         try:
             while True:
                 try:
-                    pos_frac, time_ms = await asyncio.wait_for_ms(
+                    pos_frac, time_ms, set_ms = await asyncio.wait_for_ms(
                         self._stream_queue.get(), 5000
                     )
                 except asyncio.TimeoutError:
@@ -161,15 +163,27 @@ class PatternEngine:
                 adjusted_time_ms = time_ms
                 if self.latency_comp and last_time_ms > 0:
                     now_ms = time.ticks_ms()
-                    current_buffer_ms = time.ticks_diff(now_ms, best_ms)
+                    current_buffer_ms = time.ticks_diff(
+                        now_ms, best_ms
+                    )
                     buffer_ms = inp.buffer * 100.0
                     mincomp = int(min(buffer_ms * 2, last_time_ms))
-                    offset = mincomp - current_buffer_ms
-                    if offset < 0:
-                        offset = max(-(time_ms // 4), offset)
+                    # Lag sanity: time from RX to ideal timeline
+                    lag = time.ticks_diff(set_ms, best_ms)
+                    if lag < 0 or lag > mincomp * 10:
+                        # Timeline drifted too far — reset
+                        best_ms = set_ms
+                        lag = 0
+                        offset = 0
+                    else:
+                        offset = mincomp - current_buffer_ms
+                        if offset < 0:
+                            offset = max(-(time_ms // 4), offset)
                     adjusted_time_ms = max(1, time_ms + offset)
+                else:
+                    best_ms = time.ticks_ms()
 
-                # Advance ideal timeline by the nominal (unadjusted) duration.
+                # Advance ideal timeline by nominal (unadjusted) duration.
                 best_ms = time.ticks_add(best_ms, time_ms)
                 last_time_ms = time_ms
 
