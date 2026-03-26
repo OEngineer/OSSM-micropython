@@ -211,9 +211,8 @@ class PatternEngine:
                     accel_frac = req_acc / config.MAX_ACCEL_MM_S2
                     self._ctrl.update_accel(accel_frac)
                     speed = max(0.01, min(1.0, speed_frac))
-                    if not self._ctrl.retarget(target, speed):
-                        await self._ctrl.wait_done()
-                        self._ctrl.move_to(target, speed)
+                    await self._ctrl.wait_done()
+                    self._ctrl.move_to(target, speed)
         finally:
             self._ctrl.update_accel(1.0)  # restore max accel on exit
 
