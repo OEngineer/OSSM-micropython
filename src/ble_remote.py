@@ -41,15 +41,15 @@ def _register_services():
 
     _primary_char = aioble.Characteristic(
         _service, bluetooth.UUID(config.PRIMARY_COMMAND_UUID),
-        read=True, write=True,
+        read=True, write=True, write_no_response=True,
     )
     _speed_char = aioble.Characteristic(
         _service, bluetooth.UUID(config.SPEED_KNOB_UUID),
-        read=True, write=True,
+        read=True, write=True, write_no_response=True,
     )
     _latency_char = aioble.Characteristic(
         _service, bluetooth.UUID(config.LATENCY_COMP_UUID),
-        read=True, write=True,
+        read=True, write=True, write_no_response=True,
     )
     _state_char = aioble.Characteristic(
         _service, bluetooth.UUID(config.CURRENT_STATE_UUID),
@@ -157,12 +157,19 @@ class BleRemote:
                 try:
                     pos = int(parts[1])
                     time_ms = int(parts[2])
-                    self._engine.stream_target(pos / 100.0, time_ms)
                 except ValueError:
-                    pass
+                    return
+                # Auto-start streaming (with homing) if not already active
+                if self._engine.state not in ("streaming", "homing"):
+                    self._engine.start_streaming()
+                self._engine.stream_target(pos / 100.0, time_ms)
 
     async def _watch_primary(self, connection):
         """Task: relay writes on PRIMARY_COMMAND to the command handler."""
+        # Process any command written before this task started
+        pending = _primary_char.read()
+        if pending and len(pending) > 0:
+            self._handle_command(pending)
         while True:
             try:
                 await _primary_char.written(timeout_ms=200)
