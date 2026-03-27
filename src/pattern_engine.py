@@ -44,6 +44,24 @@ class PatternEngine:
     # Commands (called from BLE handler)                                   #
     # ------------------------------------------------------------------ #
 
+    def home_only(self):
+        """Home the motor and return to Ready state (no pattern started)."""
+        asyncio.create_task(self._home_only())
+
+    async def _home_only(self):
+        await self._cancel_task()
+        self.state = EngineState.HOMING
+        self._notify()
+        try:
+            await self._ctrl.home()
+        except Exception as e:
+            print(f"Homing failed: {e}")
+            self.state = EngineState.IDLE
+            self._notify()
+            return
+        self.state = EngineState.READY
+        self._notify()
+
     def home_and_play(self):
         """Start the home-then-play sequence as a background task."""
         asyncio.create_task(self._home_and_play())
@@ -92,7 +110,9 @@ class PatternEngine:
     async def _start_streaming(self):
         await self._cancel_task()
         already_homed = self.state in (
-            EngineState.READY, EngineState.PLAYING, EngineState.STREAMING
+            EngineState.READY,
+            EngineState.PLAYING,
+            EngineState.STREAMING,
         )
         if not already_homed:
             self.state = EngineState.HOMING
@@ -146,7 +166,10 @@ class PatternEngine:
 
                 time_s = time_ms / 1000.0
                 accel_mm = sensation_frac * config.MAX_ACCEL_MM_S2
-                speed_lim = inp.velocity * config.MAX_SPEED_MM_S
+
+                # In streaming mode, velocity=0 means "uncapped" (app delegates speed to geometry)
+                v = inp.velocity if inp.velocity > 0.0 else 1.0
+                speed_lim = v * config.MAX_SPEED_MM_S
 
                 if speed_lim < 1.0 or accel_mm < 1.0:
                     continue
@@ -190,7 +213,9 @@ class PatternEngine:
         self._task = asyncio.create_task(
             PATTERN_FUNCS[self.pattern_index](self._ctrl, self.inp)
         )
-        print(f"Pattern {PATTERNS[self.pattern_index][0]} started: {PATTERNS[self.pattern_index][1]}")
+        print(
+            f"Pattern {PATTERNS[self.pattern_index][0]} started: {PATTERNS[self.pattern_index][1]}"
+        )
 
     async def _cancel_task(self):
         if self._task is not None:
@@ -202,7 +227,9 @@ class PatternEngine:
             except Exception as e:
                 print(f"Pattern task error: {e}")
             self._task = None
-        await self._ctrl.wait_done()  # ensure motor finishes decelerating before next move
+        await (
+            self._ctrl.wait_done()
+        )  # ensure motor finishes decelerating before next move
 
     async def run(self):
         """Monitor loop — restart task if it exits unexpectedly."""

@@ -34,6 +34,7 @@ aiorepl_globals = {
 repl = asyncio.create_task(aiorepl.task(aiorepl_globals))
 
 async def main():
+    engine.home_only()
     await asyncio.gather(
         engine.run(),
         ble.run(),

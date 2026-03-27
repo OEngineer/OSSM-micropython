@@ -20,6 +20,7 @@ import json
 import bluetooth
 import aioble
 import sys
+import time
 
 from . import config
 from .patterns import PATTERNS, PATTERN_FUNCS
@@ -115,7 +116,7 @@ class BleRemote:
             cmd = data.decode().strip()
         except Exception:
             return
-        print(f"BLE cmd: {cmd}")
+        print(f"{time.ticks_ms()} BLE cmd: {cmd}")
 
         if cmd.startswith("set:"):
             parts = cmd.split(":")
@@ -151,7 +152,7 @@ class BleRemote:
             self._engine.start_streaming()
 
         elif cmd == "go:menu":
-            asyncio.create_task(self._engine.stop())
+            self._engine.home_only()
 
         elif cmd.startswith("stream:"):
             parts = cmd.split(":")

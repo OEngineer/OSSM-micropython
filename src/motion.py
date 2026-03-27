@@ -1,6 +1,7 @@
 """MotionController — wraps stepper-lib Axis with OSSM state machine."""
 
 import asyncio
+import time
 import math
 from machine import Pin
 from smartstepper import SmartStepper, Axis
@@ -93,45 +94,27 @@ class MotionController:
         mm = max(config.MIN_MM, min(config.MAX_MM, mm))
         self._stepper.maxSpeed = self._frac_to_speed(speed_frac)
         if self._last_target != mm:
-            print(f"Moving to {mm}mm at {self._stepper.maxSpeed}mm/s")  # remove DEBUG
+            print(
+                f"{time.ticks_ms()} Moving to {mm}mm at {self._stepper.maxSpeed}mm/s"
+            )  # remove DEBUG
             self._last_target = mm
         self._axis.moveTo(mm)
 
-    def _clamp_speed_for_remaining(self, speed_mm_s):
-        """Limit speed so the motor can decelerate within remaining distance.
+    def move_to_triangular(self, position_frac):
+        """Non-blocking move to position_frac [0,1] using triangular profile
 
-        The stepper-lib replanner does this too, but the DMA/PIO pipeline
-        buffers 1-2 segments at the old speed.  A safety margin prevents
-        those buffered steps from pushing past the target or travel limits.
+        position_frac is within the full machine range (min_mm..max_mm).
         """
-        if not self._stepper.moving:
-            return speed_mm_s
-        pos = self._stepper.position
-        target = self._stepper._target
-        remaining = abs(target - pos)
-        # Distance to the nearer travel limit in the direction of motion
-        if target > pos:
-            limit_margin = config.MAX_MM - pos
-        else:
-            limit_margin = pos - config.MIN_MM
-        # Use the smaller of target-distance and limit-distance
-        effective = min(remaining, limit_margin)
-        # Reserve a few mm for DMA pipeline lag at high speed
-        SAFETY_MM = 2.0
-        safe_dist = max(0.0, effective - SAFETY_MM)
-        if safe_dist <= 0.0:
-            return config.MIN_SPEED_MM_S
-        # v_max = sqrt(2·a·d + v_min²)
-        max_safe = math.sqrt(
-            2.0 * self._stepper.acceleration * safe_dist
-            + config.MIN_SPEED_MM_S ** 2
-        )
-        return max(config.MIN_SPEED_MM_S, min(speed_mm_s, max_safe))
+        mm = self._frac_to_mm(position_frac)
+        mm = max(config.MIN_MM, min(config.MAX_MM, mm))
+        if self._last_target != mm:
+            print(f"{time.ticks_ms()} Triangular move to {mm}mm")  # remove DEBUG
+            self._last_target = mm
+        self._axis.moveTo(mm, triangular=True)
 
     def update_speed(self, speed_frac):
-        """Update speed mid-move, clamped for safe deceleration."""
         new_speed = self._frac_to_speed(speed_frac)
-        self._stepper.maxSpeed = self._clamp_speed_for_remaining(new_speed)
+        self._stepper.maxSpeed = new_speed
 
     def update_accel(self, accel_frac):
         """Set acceleration as a fraction of max — used by streaming for sensation."""
