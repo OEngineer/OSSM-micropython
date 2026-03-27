@@ -88,7 +88,6 @@ class MotionController:
 
         position_frac is within the full machine range (min_mm..max_mm).
         speed_frac is a fraction of max_speed_mm_s.
-        Must not be called while moving — use retarget() for streaming.
         """
         mm = self._frac_to_mm(position_frac)
         mm = max(config.MIN_MM, min(config.MAX_MM, mm))
@@ -97,46 +96,6 @@ class MotionController:
             print(f"Moving to {mm}mm at {self._stepper.maxSpeed}mm/s")  # remove DEBUG
             self._last_target = mm
         self._axis.moveTo(mm)
-
-    def retarget(self, position_frac, speed_frac):
-        """Streaming-optimized move: retargets mid-move for same direction.
-
-        Returns True if the move was started or retargeted.
-        Returns False if a direction change is needed (caller must wait_done first).
-        """
-        mm = self._frac_to_mm(position_frac)
-        mm = max(config.MIN_MM, min(config.MAX_MM, mm))
-        new_speed = self._frac_to_speed(speed_frac)
-
-        if not self._stepper.moving:
-            # Stepper is idle — start a fresh move
-            self._stepper.maxSpeed = new_speed
-            if self._last_target != mm:
-                print(f"Moving to {mm}mm at {self._stepper.maxSpeed}mm/s")
-                self._last_target = mm
-            self._axis.moveTo(mm)
-            return True
-
-        # Stepper is moving — check direction
-        current_mm = self._stepper.position
-        going_positive = self._stepper._target > current_mm
-        want_positive = mm > current_mm
-
-        # If negligible distance, treat as same direction
-        if abs(mm - current_mm) < 1.0 / config.STEPS_PER_MM:
-            return True
-
-        if going_positive != want_positive:
-            return False  # direction change needed
-
-        # Same direction: retarget by updating _target and replanning
-        self._stepper._target = mm
-        new_speed = self._clamp_speed_for_remaining(new_speed)
-        self._stepper.maxSpeed = new_speed  # triggers _replan()
-        if self._last_target != mm:
-            print(f"Moving to {mm}mm at {self._stepper.maxSpeed}mm/s")
-            self._last_target = mm
-        return True
 
     def _clamp_speed_for_remaining(self, speed_mm_s):
         """Limit speed so the motor can decelerate within remaining distance.

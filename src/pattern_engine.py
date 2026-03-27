@@ -28,7 +28,6 @@ class PatternEngine:
         self._task = None
         self._state_cb = None  # called on state/inp changes (for BLE notify)
         self._stream_queue = Queue()
-        self.latency_comp = False
         self._session_id = f"{random.getrandbits(32):08x}"
 
     def set_state_callback(self, cb):
@@ -112,93 +111,45 @@ class PatternEngine:
     def stream_target(self, position_frac, time_ms):
         """Queue a streaming position target (called by BLE handler)."""
         try:
-            self._stream_queue.put_nowait(
-                (position_frac, time_ms, time.ticks_ms())
-            )
+            self._stream_queue.put_nowait((position_frac, time_ms))
         except Exception:
             pass  # drop if queue full
 
     async def _streaming_pattern(self):
-        """Consume stream targets and execute them.
-
-        Matches upstream streaming.cpp behavior:
-        - Same-direction moves retarget mid-move (no gap)
-        - Direction changes wait for the current move to finish
-        - Stale queued commands are skipped (only latest used)
-        - Latency compensation adjusts move duration for jitter
-        """
+        """Consume stream targets and execute them one at a time."""
         range_mm = config.MAX_MM - config.MIN_MM
-        # Latency compensation state
-        best_ms = time.ticks_ms()
-        last_time_ms = 0
         try:
             while True:
-                # Block until at least one command arrives
+                # Block until a command arrives (timeout resets on idle)
                 try:
-                    pos_frac, time_ms, set_ms = (
-                        await asyncio.wait_for_ms(
-                            self._stream_queue.get(), 5000
-                        )
+                    pos_frac, time_ms = await asyncio.wait_for_ms(
+                        self._stream_queue.get(), 5000
                     )
                 except asyncio.TimeoutError:
-                    best_ms = time.ticks_ms()
-                    last_time_ms = 0
                     continue
 
                 # Drain queue — use only the freshest command
                 while True:
                     try:
-                        pos_frac, time_ms, set_ms = (
-                            self._stream_queue.get_nowait()
-                        )
+                        pos_frac, time_ms = self._stream_queue.get_nowait()
                     except Exception:
                         break
 
                 # Depth/stroke windowing (upstream streaming.cpp)
                 inp = self.inp
-                sensation_frac = max(
-                    0.01, (inp.sensation + 1.0) / 2.0
-                )
+                sensation_frac = max(0.01, (inp.sensation + 1.0) / 2.0)
                 max_stroke = min(inp.stroke, inp.depth)
                 depth_offset = (1.0 - max_stroke) * inp.depth
                 target = pos_frac * max_stroke + depth_offset
                 current = self._ctrl.position_frac
                 dist_mm = abs(target - current) * range_mm
 
-                # Latency compensation
-                adjusted_time_ms = time_ms
-                if self.latency_comp and last_time_ms > 0:
-                    now_ms = time.ticks_ms()
-                    current_buffer_ms = time.ticks_diff(
-                        now_ms, best_ms
-                    )
-                    buffer_ms = inp.buffer * 100.0
-                    mincomp = int(
-                        min(buffer_ms * 2, last_time_ms)
-                    )
-                    lag = time.ticks_diff(set_ms, best_ms)
-                    if lag < 0 or lag > mincomp * 10:
-                        best_ms = set_ms
-                        offset = 0
-                    else:
-                        offset = mincomp - current_buffer_ms
-                        if offset < 0:
-                            offset = max(
-                                -(time_ms // 4), offset
-                            )
-                    adjusted_time_ms = max(1, time_ms + offset)
-                else:
-                    best_ms = time.ticks_ms()
-
-                best_ms = time.ticks_add(best_ms, time_ms)
-                last_time_ms = time_ms
-
-                time_s = adjusted_time_ms / 1000.0
+                time_s = time_ms / 1000.0
                 accel_mm = sensation_frac * config.MAX_ACCEL_MM_S2
                 speed_lim = inp.velocity * config.MAX_SPEED_MM_S
 
                 if speed_lim < 1.0 or accel_mm < 1.0:
-                    continue  # skip if speed/accel too low
+                    continue
 
                 step_mm = 1.0 / config.STEPS_PER_MM
                 if time_s <= 0.01 or dist_mm <= step_mm:
@@ -216,23 +167,16 @@ class PatternEngine:
                 req_spd = (2 * dist_mm) / time_s
                 req_spd = max(1.0, min(speed_lim, req_spd))
                 vt = req_spd * time_s
-                prop = max(
-                    0.01,
-                    -((2 * dist_mm - 2 * vt) / vt),
-                )
+                prop = max(0.01, -((2 * dist_mm - 2 * vt) / vt))
                 req_acc = req_spd / (time_s * prop / 2)
                 req_acc = max(1.0, min(accel_mm, req_acc))
 
-                speed_frac = req_spd / config.MAX_SPEED_MM_S
-                accel_frac = req_acc / config.MAX_ACCEL_MM_S2
-                self._ctrl.update_accel(accel_frac)
-                speed = max(0.01, min(1.0, speed_frac))
+                self._ctrl.update_accel(req_acc / config.MAX_ACCEL_MM_S2)
+                speed = max(0.01, min(1.0, req_spd / config.MAX_SPEED_MM_S))
 
-                # Try mid-move retarget (same direction)
-                if not self._ctrl.retarget(target, speed):
-                    # Direction change — wait then start fresh
-                    await self._ctrl.wait_done()
-                    self._ctrl.move_to(target, speed)
+                # Wait for current move to complete, then start fresh
+                await self._ctrl.wait_done()
+                self._ctrl.move_to(target, speed)
         finally:
             self._ctrl.update_accel(1.0)
 

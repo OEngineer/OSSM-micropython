@@ -193,20 +193,6 @@ class BleRemote:
             except Exception as e:
                 print(f"BLE heartbeat notify error: {e}")
 
-    async def _watch_latency(self, connection):
-        """Task: relay writes on LATENCY_COMP to the engine flag."""
-        while True:
-            try:
-                await _latency_char.written(timeout_ms=200)
-                raw = _latency_char.read().decode().strip().lower()
-                enabled = raw in ("true", "1", "t")
-                self._engine.latency_comp = enabled
-                _latency_char.write(b"true" if enabled else b"false")
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                print(f"_watch_latency error: {e}")
-
     async def _watch_speed(self, connection):
         """Task: relay writes on SPEED_KNOB to velocity updates."""
         while True:
@@ -245,19 +231,17 @@ class BleRemote:
             # Watch all writeable characteristics and send periodic heartbeat
             t_primary = asyncio.create_task(self._watch_primary(connection))
             t_speed = asyncio.create_task(self._watch_speed(connection))
-            t_latency = asyncio.create_task(self._watch_latency(connection))
             t_heartbeat = asyncio.create_task(self._heartbeat(connection))
 
             await connection.disconnected()
 
             t_primary.cancel()
             t_speed.cancel()
-            t_latency.cancel()
             t_heartbeat.cancel()
             if self._notify_task is not None:
                 self._notify_task.cancel()
                 self._notify_task = None
-            for t in (t_primary, t_speed, t_latency, t_heartbeat):
+            for t in (t_primary, t_speed, t_heartbeat):
                 try:
                     await t
                 except asyncio.CancelledError:
