@@ -250,11 +250,21 @@ class PatternEngine:
     # State for BLE notifications                                           #
     # ------------------------------------------------------------------ #
 
+    # Map internal engine states to the BLE protocol strings expected by the app.
+    _BLE_STATE_MAP = {
+        EngineState.IDLE: "idle",
+        EngineState.HOMING: "homing",
+        EngineState.READY: "menu.idle",
+        EngineState.PLAYING: "strokeEngine",
+        EngineState.STREAMING: "streaming",
+        EngineState.PAUSED: "strokeEngine.idle",
+    }
+
     def state_dict(self):
         """Return current state as a dict for JSON serialisation."""
         return {
             "timestamp": time.ticks_ms(),
-            "state": self.state,
+            "state": self._BLE_STATE_MAP.get(self.state, "idle"),
             "speed": round(self.inp.velocity * 100),
             "stroke": round(self.inp.stroke * 100),
             "sensation": round((self.inp.sensation + 1.0) / 2.0 * 100),
